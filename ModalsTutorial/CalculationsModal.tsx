@@ -380,3 +380,4 @@ export default class CalculatorsModal extends React.Component<any, any>{
         )
     }
 }
+//calculationModal
