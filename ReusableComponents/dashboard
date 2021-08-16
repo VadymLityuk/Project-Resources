@@ -1,0 +1,1847 @@
+/** *************************** Modification History *****************************
+ *  06/23/2021 - [CAV] - Created initial version
+ *  *************************** Modification History *****************************
+ */
+ import React from 'react';
+ import { RouteComponentProps } from 'react-router-dom';
+ import axios from "axios";
+ import Moment from 'moment';
+ import uuidv4 from 'uuid/v4';
+ import { translateString, StringTranslator } from 'components/HelperMethods/ReusableComponents';
+ import { errorLogMessages } from '../LogMessages';
+ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+ import { faCircle, faDotCircle } from '@fortawesome/free-regular-svg-icons';
+ import { faTimesCircle } from '@fortawesome/free-solid-svg-icons';
+ import D4AGauge from 'components/HelperMethods/D4AGauge';
+ import { D4ACarouselMulti } from 'components/HelperMethods/D4ACarouselMulti';
+ import { LinkTitle } from 'components/LinkTitle';
+ import { newStore } from 'index';
+ import { Button, Dialog, DialogActions, DialogContent, DialogTitle } from '@material-ui/core';
+ import { D4ALineChart } from 'components/HelperMethods/D4ALineChart';
+ import { D4AComboChart } from 'components/HelperMethods/D4AComboChart';
+ import Barcanvastest from '../Graphs_And_Charts/EquipmentGraph';
+ import Modal from 'react-modal';
+ import {Grid,Paper,Box} from '@material-ui/core';
+
+
+
+ interface LineStatusDisplayInterface {
+     CurrentShift: number,
+     SCADAStatusCode: number,
+     SCADAStatus: string,
+     SCADAStatusDurationFormatted: string,
+     BackgroundColor: string,
+     ForeColor: string,
+     ProductDescription: string,
+     ProductionDateFormatted: string,
+     AvailabilityTarget: number,
+     AvailabilityRun: number,
+     AvailabilityShift: number,
+     PerformanceTarget: number,
+     PerformanceRun: number,
+     PerformanceShift:number,
+     QualityRun: number,
+     QualityShift: number,
+     OEERun: number,
+     OEEShift: number,
+     OrderNum: string,
+     OrderCompletion: number,
+     OrderEstimatedCompletionFormatted: string,
+     MachStoppedFillerDesc: string,
+     MachStoppedFillerCauseDesc: string,
+     CasesPerHourRun: number,
+     CasesPerHourShift: number,
+     TargetCPH: number,
+     AverageCPH: number,
+     CasesThisRun: number,
+     CasesThisShift: number,
+     RatedSpeedBPM: number,
+     RunTimeRun: number,
+     RunTimeShift: number,
+     StopTimeRun: number,
+     StopTimeShift: number,
+     BackedupTimeRun: number,
+     BackedupTimeShift: number,
+     StarvedTimeRun: number,
+     StarvedTimeShift: number,
+     ChangeoverTimeRun: number,
+     ChangeoverTimeShift: number,
+     StandardCOTimeRun: number,
+     StandardCOTimeShift: number,
+     PackagesThisRun: number,
+     PackagesThisShift: number,
+     RejectsThisRun: number,
+     RejectsThisShift: number,
+ }
+ 
+ interface EquipmentStatusInterface {
+     MachineID: string,
+     MachineDesc: string,
+     IsConstraintMachine: boolean,
+     LineID: number,
+     LinePosition: number,
+     ImagePath: string,
+     EquipmentStatus: number,
+     EquipmentStatusDescription: string,
+     ActiveFault: string,
+     OrderNum: string,
+     EfficiencyRun: number,
+     EfficiencyShift: number,
+     Speed: number,
+     DeclaredStops: number,
+     UndeclaredStops: number,
+     RawStatusData: any,
+     BypassModeActive: boolean,
+     MTTRRun: number,
+     MTTRShift: number,
+     MTBFRun: number,
+     MTBFShift: number,
+     StopCountRun: number,
+     StopCountShift: number,
+     TopCause1: string,
+     TopCause1Duration: number,
+     TopCause2: string,
+     TopCause2Duration: number,
+ }
+ 
+ interface CPHDataInterface {
+     DateTime: Date,
+     DateTimeFormatted: string,
+     Cases: number,
+     TargetCPH: number,
+     Product: string
+ }
+ 
+ interface RTRejectInterface {
+     RejectType: number,
+     Equipment: string,
+     Count: number
+ }
+ 
+ interface LabelValueInterface {
+     Label: string,
+     Value: any
+ }
+ 
+ class OEEDashboard extends React.Component<RouteComponentProps, {
+     server: string,
+     UserID: string,
+     PageTitle: string,
+     LinesArray: Array<LabelValueInterface>,
+     SelectedLineID: string,
+     ShowRunShift: string,
+     ExcludeStandardCO: boolean,
+     LineStatusDisplayRawData: Array<any>,
+     LineStatusDisplayData: LineStatusDisplayInterface | null,
+     EquipmentArray: Array<EquipmentStatusInterface>,
+     CPHDataArray: Array<CPHDataInterface>,
+     RealTimeRejectsArray: Array<RTRejectInterface>,
+     ShowAlertDialog: boolean,
+     AlertDialogTitle: string,
+     AlertDialogContent: any,
+     ShowChartModal: boolean,
+     ChartModalTitle: string,
+     ChartModalContent: any
+ }> {
+     private WatchDogCounter = 0;
+     private intervalId;
+     private customStyles = {
+         overlay: {
+             position: 'fixed',
+             top: 0,
+             left: 0,
+             right: 0,
+             bottom: 0,
+             backgroundColor: 'rgba(255, 255, 255, 0.75)',
+             zIndex: 1000
+         },
+         content: {
+             top: '45%',
+             left: '50%',
+             right: 'auto',
+             bottom: 'auto',
+             width: '75%',
+             height: '50%',
+             fontSize: '18px',
+             marginRight: '-50%',
+             transform: 'translate(-50%, -50%)',
+             border: '1px solid #ccc',
+             background: '#fff',
+             overflow: 'auto',
+             WebkitOverflowScrolling: 'touch',
+             borderRadius: '4px',
+             outline: 'none',
+             padding: '20px'
+         }
+     };
+     constructor (props) {
+         super(props);
+ 
+         let server: any = (localStorage.getItem('servername') === null || localStorage.getItem('servername') === undefined) ? "" : localStorage.getItem('servername');
+         let userID: any = (localStorage.getItem('userID') === null || localStorage.getItem('userID') === undefined) ? "" : localStorage.getItem('userID');
+         let lineID: any = localStorage.getItem('selectedLine') === null || localStorage.getItem('selectedLine') === undefined ? "0" : localStorage.getItem('selectedLine');
+ 
+         this.state = {
+             server: server,
+             UserID: userID,
+             PageTitle: translateString("OEE Dashboard"),
+             LinesArray: new Array(),
+             SelectedLineID: lineID,
+             ShowRunShift: "Run",
+             ExcludeStandardCO: true,
+             LineStatusDisplayRawData: new Array(),
+             LineStatusDisplayData: null,
+             EquipmentArray: new Array(),
+             CPHDataArray: new Array(),
+             RealTimeRejectsArray: new Array(),
+             ShowAlertDialog: false,
+             AlertDialogTitle: "Hello",
+             AlertDialogContent: "Hello World",
+             ShowChartModal: false,
+             ChartModalTitle: "",
+             ChartModalContent: ""
+         }
+ 
+         this.WatchDogTimer = this.WatchDogTimer.bind(this);
+     }
+ 
+     componentDidMount () {
+         this.loadLookupData();
+ 
+         //Set the refresh interval
+         this.WatchDogCounter = 0;
+         this.intervalId = setInterval(this.WatchDogTimer, 1000);
+     }
+ 
+     componentWillUnmount () {
+         clearInterval(this.intervalId);
+     }
+ 
+     WatchDogTimer() {
+         this.WatchDogCounter = this.WatchDogCounter + 1;
+         
+         if (this.WatchDogCounter >= 10) {
+             this.WatchDogCounter = 0;
+             this.fetchData();
+         }
+     }
+ 
+     loadLookupData = () => {
+         let selfThis = this;
+         let {server, SelectedLineID} = this.state;
+ 
+         let LinesArray: Array<LabelValueInterface> = new Array();
+         let EquipmentArray: Array<EquipmentStatusInterface> = new Array();
+         let excludeStandardCO = true;
+ 
+         let apiCallsArray = [
+             server + "/api/lines/0",
+             server + "/api/monitoredlineequipment/0",
+             server + "/api/getlinelayout/0"
+         ];
+ 
+         let reduxState = newStore.getState();
+         if (reduxState) {
+             excludeStandardCO = reduxState.systemDefinition[0].PerformanceCalculation_ExcludeStandardCO ? reduxState.systemDefinition[0].PerformanceCalculation_ExcludeStandardCO : true;
+             excludeStandardCO = false;
+         }
+         console.log("Redux State", reduxState)
+ 
+         axios.all(apiCallsArray.map(l => axios.get(l)))
+         .then(axios.spread(function (...res) {
+             let linesData = res[0].data;
+             let monitoredEquipmentData = res[1].data;
+             let lineLayoutData = res[2].data;
+             // let rejectTypesData = res[3].data;
+ 
+             //Process Lines Information
+             if (linesData.length > 0) {
+                 linesData.forEach((aLine, lIndex) => {
+                     LinesArray.push({ Label: aLine.LineDesc, Value: aLine.LineID.toString() });
+                 });
+             }
+             //set the current line id
+             if (SelectedLineID === "0") {
+                 if (LinesArray.length > 0) {
+                     //There's no line selected, grab the first available line in the options of lines
+                     SelectedLineID = LinesArray[0].Value;
+                     localStorage.setItem('selectedLine', SelectedLineID);
+                 }
+             } else {
+                 //There's a line selected in the localstorage, check to see if it is a valid line
+                 if (LinesArray.length > 0) {
+                     if (!(LinesArray.filter(x => x.Value === SelectedLineID).length > 0)) {
+                         //The line id in the local storage is for a line number that doesn't exist in this plant, 
+                         //replace it with the first available line in this plant
+                         SelectedLineID = LinesArray[0].Value;
+                         localStorage.setItem('selectedLine', SelectedLineID);
+                     }
+                 }
+             }
+ 
+             //Process Equipment Information
+             if (monitoredEquipmentData.length > 0) {
+                 monitoredEquipmentData.forEach((anEquipment, eIndex) => {
+                     EquipmentArray.push({
+                         MachineID: anEquipment.MachineID,
+                         MachineDesc: anEquipment.MachineDesc,
+                         IsConstraintMachine: anEquipment.IsConstraintMachine,
+                         LineID: anEquipment.LineID,
+                         LinePosition: 0,
+                         ImagePath: "",
+                         EquipmentStatus: 0,
+                         EquipmentStatusDescription: "",
+                         ActiveFault: "",
+                         OrderNum: "",
+                         EfficiencyRun: 0,
+                         EfficiencyShift: 0,
+                         Speed: 0,
+                         DeclaredStops: 0,
+                         UndeclaredStops: 0,
+                         RawStatusData: new Array(),
+                         BypassModeActive: false,
+                         MTTRRun: 0,
+                         MTTRShift: 0,
+                         MTBFRun: 0,
+                         MTBFShift: 0,
+                         StopCountRun: 0,
+                         StopCountShift: 0,
+                         TopCause1: "",
+                         TopCause1Duration: 0,
+                         TopCause2: "",
+                         TopCause2Duration: 0
+                     });
+                 });
+             }
+ 
+             //Equipment Line Position
+             if (lineLayoutData.length > 0) {
+                 lineLayoutData.forEach((anEquipment, eIndex) => {
+                     EquipmentArray.forEach((anEquipmentItem, eiIndex) => {
+                         if (anEquipment.EquipID === anEquipmentItem.MachineID) {
+                             anEquipmentItem.LinePosition = anEquipment.LinePosition;
+                             anEquipmentItem.ImagePath = anEquipment.ImagePath;
+                         }
+                     });
+                 });
+             }
+ 
+             if (EquipmentArray.length > 0) {
+                 EquipmentArray.sort((a,b) => {return((a.LineID * 100 + a.LinePosition) - (b.LineID * 100 + b.LinePosition))})
+             }
+ 
+             selfThis.setState({
+                 ExcludeStandardCO: excludeStandardCO,
+                 LinesArray,
+                 EquipmentArray,
+                 // RejectTypesArray,
+                 SelectedLineID
+             }, () => {
+                 selfThis.fetchData();
+             });
+         }))
+         .catch(error => {
+             selfThis.setState({
+                 LinesArray
+             });
+             errorLogMessages(error);
+             console.log("Error loading lookup data.", error);
+         })
+     }
+ 
+     fetchData = () => {
+         let selfThis = this;
+         let {server, SelectedLineID, EquipmentArray} = this.state;
+ 
+         let todayFormatted = Moment().format("YYYY-MM-DD");
+ 
+         let apiCallsArray = [
+             server + "/api/getDataForLineStatusDisplay/" + SelectedLineID,
+             server + "/api/getEquipmentStatus/0",
+             server + "/api/getcasesperperiod/" + SelectedLineID +"/" + todayFormatted +"/" + todayFormatted + "/0/0/hour/0/0",
+             server + "/api/getRealTimeRejectsPerPeriod/" + SelectedLineID + "/1"
+         ];
+ 
+         axios.all(apiCallsArray.map(l => axios.get(l)))
+         .then(axios.spread(function (...res) {
+             //Process LineStatus data
+             let lineStatusData = res[0].data[0];
+             
+             let bgColor = lineStatusData.Color;
+             let hex = bgColor.replace(/#/, '');
+             let r = parseInt(hex.substr(0, 2), 16);
+             let g = parseInt(hex.substr(2, 2), 16);
+             let b = parseInt(hex.substr(4, 2), 16);
+             let luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+             let foreColor = luminance > 0.5 ? "#000000" : "#ffffff";
+ 
+             let statusCode = lineStatusData.StatusCode;
+             let statusDescription = translateString(lineStatusData.SCADAStatus);  //Normally we would not translate values from the database, but the statuses are limited in number and fixed in values
+             let eventTime: number = 0;
+             let eventTimeFormatted: string = "";
+ 
+             switch (statusCode) {
+                 case 0:  //Stopped
+                     eventTime = lineStatusData.CurrentStopTime === null ? 0 : lineStatusData.CurrentStopTime;
+                     break;
+                 case 1:  //Running
+                 case 100:  //Running Slow
+                     eventTime = lineStatusData.CurrentRunTime === null ? 0 : lineStatusData.CurrentRunTime;
+                     break;
+                 case 2:  //ChangeOver
+                     eventTime = lineStatusData.CurrentChangeoverTime === null ? 0 : lineStatusData.CurrentChangeoverTime;
+                     break;
+                 case 6:  //CIP
+                     eventTime = lineStatusData.CurrentCIPTime === null ? 0 : lineStatusData.CurrentCIPTime;
+                     break;
+                 case 7:  //Maintenance
+                     eventTime = lineStatusData.MaintenanceTime === null ? 0 : lineStatusData.MaintenanceTime;  //Not one of the "CurrentXXXTime" values, need to check if it's accurate to use this one
+                     break;
+                 case 8:  //Starved
+                     eventTime = lineStatusData.CurrentStarvedTime === null ? 0 : lineStatusData.CurrentStarvedTime;
+                     break;
+                 case 9:  //Backed Up
+                     eventTime = lineStatusData.CurrentBackedUpTime === null ? 0 : lineStatusData.CurrentBackedUpTime;
+                     break;
+                 case 3:  //Not Scheduled
+                 case 4:  //Rem from Prod
+                 case 5:  //Return to Prod
+                 default:  //Unknown
+                     break;
+             }
+ 
+             if (eventTime > 60) {
+                 eventTimeFormatted = Math.floor(eventTime / 60).toFixed(0) + "h " + (eventTime % 60).toFixed(2) + "m";
+             } else if (eventTime > 0) {
+                 eventTimeFormatted = (eventTime % 60).toFixed(2) + "m";
+             }
+ 
+             let productionDate = Moment.parseZone(lineStatusData.ProductionDate);
+             let orderEstimatedCompletionFormatted = "";
+             if (lineStatusData.EstimatedCompletion !== null) {
+                 let orderEstimatedCompletion = Moment.parseZone(lineStatusData.EstimatedCompletion);
+                 orderEstimatedCompletionFormatted = orderEstimatedCompletion.format("L") + " " + orderEstimatedCompletion.format("LT");
+             }
+ 
+             let LineStatusDisplayData: LineStatusDisplayInterface = {
+                 CurrentShift: lineStatusData.CurrentShift,
+                 SCADAStatusCode: statusCode,
+                 SCADAStatus: statusDescription,
+                 SCADAStatusDurationFormatted: eventTimeFormatted,
+                 BackgroundColor: bgColor,
+                 ForeColor: foreColor,
+                 ProductDescription: lineStatusData.ProdNo === null ? lineStatusData.Prod_descr : lineStatusData.ProdNo + " -" + lineStatusData.Prod_descr,
+                 ProductionDateFormatted: productionDate.format("L"),
+                 AvailabilityTarget: lineStatusData.EfficiencyTarget === null ? 0 : lineStatusData.EfficiencyTarget,
+                 AvailabilityRun: lineStatusData.AvailabilityThisRun,
+                 AvailabilityShift: lineStatusData.AvailabilityShift,
+                 PerformanceTarget: lineStatusData.PerformanceTarget === null ? 0 : lineStatusData.PerformanceTarget,
+                 PerformanceRun: lineStatusData.Performance_ThisRun,
+                 PerformanceShift: lineStatusData.PerformanceShift,
+                 QualityRun: lineStatusData.QualityThisRun,
+                 QualityShift: lineStatusData.QualityThisShift,
+                 OEERun: lineStatusData.OEE_ThisProductionRun,
+                 OEEShift: lineStatusData.OEEThisShift,
+                 OrderNum: lineStatusData.OrderNum,
+                 OrderCompletion: lineStatusData.PercentCompletion === null ? 0 : lineStatusData.PercentCompletion,
+                 OrderEstimatedCompletionFormatted: orderEstimatedCompletionFormatted,
+                 MachStoppedFillerDesc: lineStatusData.MachStoppedFillerDesc === null ? "" : lineStatusData.MachStoppedFillerDesc,
+                 MachStoppedFillerCauseDesc: lineStatusData.MachStoppedFillerCauseDesc === null ? translateString("Unknown") : lineStatusData.MachStoppedFillerCauseDesc,
+                 CasesPerHourRun: lineStatusData.CasesPerHour_ThisRun === null ? 0 : lineStatusData.CasesPerHour_ThisRun,
+                 CasesPerHourShift: lineStatusData.CasesPerHourShift === null ? 0 : lineStatusData.CasesPerHourShift,
+                 TargetCPH: 0,
+                 AverageCPH: 0,
+                 CasesThisRun: lineStatusData.CasesThisRun === null ? 0 : lineStatusData.CasesThisRun,
+                 CasesThisShift: lineStatusData.CasesThisShift === null ? 0 : lineStatusData.CasesThisShift,
+                 RatedSpeedBPM: lineStatusData.RatedSpeedBPM === null ? 0 : lineStatusData.RatedSpeedBPM,
+                 RunTimeRun: lineStatusData.RunTime_ThisRun === null ? 0 : lineStatusData.RunTime_ThisRun,
+                 RunTimeShift: lineStatusData.RunTimeShift === null ? 0 : lineStatusData.RunTimeShift,
+                 StopTimeRun: lineStatusData.StopTime_ThisRun === null ? 0 : lineStatusData.StopTime_ThisRun,
+                 StopTimeShift: lineStatusData.StopTimeShift === null ? 0 : lineStatusData.StopTimeShift,
+                 BackedupTimeRun: lineStatusData.BackedUpTime_ThisRun === null ? 0 : lineStatusData.BackedUpTime_ThisRun,
+                 BackedupTimeShift: lineStatusData.BackedUpTimeShift === null ? 0 : lineStatusData.BackedUpTimeShift,
+                 StarvedTimeRun: lineStatusData.StarvedTime_ThisRun === null ? 0 : lineStatusData.StarvedTime_ThisRun,
+                 StarvedTimeShift: lineStatusData.StarvedTimeShift === null ? 0 : lineStatusData.StarvedTimeShift,
+                 ChangeoverTimeRun: lineStatusData.COTime_ThisRun === null ? 0 : lineStatusData.COTime_ThisRun,
+                 ChangeoverTimeShift: lineStatusData.ChangeoverTimeShift === null ? 0 : lineStatusData.ChangeoverTimeShift,
+                 StandardCOTimeRun: lineStatusData.StandardCOTime === null ? 0 : lineStatusData.StandardCOTime,
+                 StandardCOTimeShift: lineStatusData.StandardCO_ThisShift === null ? 0 : lineStatusData.StandardCO_ThisShift,
+                 PackagesThisRun: lineStatusData.PackagesThisRun === null ? 0 : lineStatusData.PackagesThisRun,
+                 PackagesThisShift: lineStatusData.PackagesThisShift === null ? 0 : lineStatusData.PackagesThisShift,
+                 RejectsThisRun: lineStatusData.RejectsRejectedThisRun === null ? 0 : lineStatusData.RejectsRejectedThisRun,
+                 RejectsThisShift: lineStatusData.RejectsRejectedThisShift === null ? 0 : lineStatusData.RejectsRejectedThisShift,
+             }
+ 
+             //Process EquipmentStatus Data
+             let equipmentStatusData = res[1].data;
+             if (equipmentStatusData.length > 0) {
+                 equipmentStatusData.forEach((anEquipmentStatus, esIndex) => {
+                     EquipmentArray.forEach((anEquipment, eIndex) => {
+                         if (anEquipment.MachineID === anEquipmentStatus.EquipID) {
+                             anEquipment.EquipmentStatus = anEquipmentStatus.EquipmentStatus;
+                             anEquipment.EquipmentStatusDescription = anEquipmentStatus.EquipmentStatusDescription;
+                             anEquipment.ActiveFault = anEquipmentStatus.ActiveFault;
+                             anEquipment.OrderNum = anEquipmentStatus.OrderNum;
+                             anEquipment.RawStatusData = anEquipmentStatus;
+                             anEquipment.EfficiencyRun = anEquipmentStatus.Uptime_ThisRun;
+                             anEquipment.EfficiencyShift = anEquipmentStatus.Uptime;
+                             anEquipment.Speed = anEquipmentStatus.Speed;
+                             anEquipment.DeclaredStops = anEquipmentStatus.DeclaredCount;
+                             anEquipment.UndeclaredStops = anEquipmentStatus.UndeclaredCount;
+                             anEquipment.BypassModeActive = anEquipmentStatus.BypassModeActive === null ? false : (anEquipmentStatus.BypassModeActive === 1 ? true : false);
+                             anEquipment.MTTRRun = anEquipmentStatus.MTTR_ThisRun === null ? 0 : anEquipmentStatus.MTTR_ThisRun;
+                             anEquipment.MTTRShift = anEquipmentStatus.MTTR === null ? 0 : anEquipmentStatus.MTTR;
+                             anEquipment.MTBFRun = anEquipmentStatus.MTBF_ThisRun === null ? 0 : anEquipmentStatus.MTBF_ThisRun;
+                             anEquipment.MTBFShift = anEquipmentStatus.MTBF === null ? 0 : anEquipmentStatus.MTBF;
+                             anEquipment.StopCountRun = anEquipmentStatus.StopCount_ThisRun === null ? 0 : anEquipmentStatus.StopCount_ThisRun;
+                             anEquipment.StopCountShift = anEquipmentStatus.StopCountShift === null ? 0 : anEquipmentStatus.StopCountShift;
+                             anEquipment.TopCause1 = anEquipmentStatus.TodayTopCause_1 === null ? "" : anEquipmentStatus.TodayTopCause_1;
+                             anEquipment.TopCause1Duration = anEquipmentStatus.TodayTopCauseDuration_1 === null ? 0 : anEquipmentStatus.TodayTopCauseDuration_1;
+                             anEquipment.TopCause2 = anEquipmentStatus.TodayTopCause_2 === null ? "" : anEquipmentStatus.TodayTopCause_2;
+                             anEquipment.TopCause2Duration = anEquipmentStatus.TodayTopCauseDuration_2 === null ? 0 : anEquipmentStatus.TodayTopCauseDuration_2;
+                         }
+                     });
+                 });
+             }
+ 
+             //process cases per period data
+             let CPHDataArray: Array<CPHDataInterface> = new Array();
+             let casesPerPeriodData = res[2].data.reverse();
+             let sumCases = 0;
+             let count = 0;
+ 
+             if (casesPerPeriodData.length > 0) {
+                 casesPerPeriodData.forEach((aCPH, cIndex) => {
+                     let dateTimeFormatted = Moment.parseZone(aCPH.CountDateTime).format("HH:mm");
+                     CPHDataArray.push({
+                         DateTime: new Date(aCPH.CountDateTime),
+                         DateTimeFormatted: dateTimeFormatted,
+                         Cases: aCPH.Cases,
+                         TargetCPH: aCPH.TargetCPH,
+                         Product: aCPH.ProdString
+                     });
+                     
+                     sumCases += (aCPH.Cases === null ? 0 : aCPH.Cases);
+                     count += (aCPH.Cases === 0 ? 0 : 1); //TargetCPH = 0 means it's an end-of-day entry, no need to count it
+                 });
+             }
+             
+             if (CPHDataArray.length > 0) {
+                 LineStatusDisplayData.TargetCPH = CPHDataArray[CPHDataArray.length -1].TargetCPH;
+                 LineStatusDisplayData.AverageCPH = count > 0 ? (sumCases / count) : 0;
+             }
+ 
+             //RT Line Rejects
+             let rtRejectsData = res[3].data;
+             let RealTimeRejectsArray: Array<RTRejectInterface> = new Array();
+ 
+             if (rtRejectsData.length > 0) {
+                 rtRejectsData.forEach((aReject, rIndex) => {
+                     RealTimeRejectsArray.push({
+                         RejectType: aReject.RejectType,
+                         Equipment: aReject.Equipment,
+                         Count: aReject.RejectCases
+                     });
+                 });
+                 
+                 RealTimeRejectsArray.sort((a,b) => (a.Equipment.toLowerCase() > b.Equipment.toLowerCase()) ? 1 : ((b.Equipment.toLowerCase() > a.Equipment.toLowerCase()) ? -1 : 0))
+             }
+ 
+             selfThis.setState({
+                 LineStatusDisplayRawData: res[0].data,
+                 LineStatusDisplayData,
+                 EquipmentArray,
+                 CPHDataArray,
+                 RealTimeRejectsArray
+             });
+         }))
+         .catch(error => {
+             errorLogMessages(error);
+             console.log("Error loading lookup data.", error);
+         })
+     }
+ 
+     toggleShowRunShift = () => {
+         const showRunShift = this.state.ShowRunShift;
+ 
+         this.setState({
+             ShowRunShift: showRunShift === "Run" ? "Shift" : "Run"
+         });
+     }
+ 
+     setSelectedLine = (newLineID: string) => {
+         localStorage.setItem('selectedLine', newLineID);
+ 
+         this.setState({
+             SelectedLineID: newLineID
+         }, () => {
+             this.fetchData();
+         })
+     }
+ 
+     getStatusColor = (EquipmentStatus: number) => {
+         let backgroundStyle = "";
+         switch (EquipmentStatus) {
+             case 0: backgroundStyle = 'hsl(9, 70%, 45%)'
+                 break;
+             case 1: backgroundStyle = 'hsl(108, 53%, 65%)'
+                 break;
+             case 2: backgroundStyle = 'hsl(51, 100%, 50%)'
+                 break;
+             case 3: backgroundStyle = 'hsl(212, 22%, 66%)'
+                 break;
+             case 4: backgroundStyle = 'hsl(330, 100%, 71%)'
+                 break;
+             case 5: backgroundStyle = 'hsl(207, 64%, 40%)'
+                 break;
+             case 6: backgroundStyle = 'hsl(180, 100%, 50%)'
+                 break;
+             case 7: backgroundStyle = 'hsl(209, 100%, 79%)'
+                 break;
+             case 8: backgroundStyle = 'hsl(0, 0%, 43%)'
+                 break;
+             case 20: backgroundStyle = 'hsl(34, 100%, 40%)'
+                 break;
+             // case 100: backgroundStyle = 'hsl(86, 28%, 73%)'
+             //     break;
+             case 100: backgroundStyle = 'hsl(95, 49%, 36%)'
+                 break;
+             default:
+                 break;
+         }
+         return backgroundStyle
+     }
+ 
+     showEquipmentCardDetails = (Equipment: EquipmentStatusInterface) => {
+         let {ShowRunShift} = this.state;
+ 
+         let equipmentInfo = (
+             <div className="card">
+                 <div className="card-body">
+                     {/* Equipment Status */}
+                     <div className="row">
+                         <div className="col-12">
+                             <input name="EquipmentStatusInput" 
+                                 type="text"
+                                 className="form-control text-center"
+                                 style={{color: "white", backgroundColor: this.getStatusColor(Equipment.EquipmentStatus)}}
+                                 value={Equipment.EquipmentStatusDescription}
+                                 disabled={true}
+                             />
+                         </div>
+                     </div>
+                     {/* Efficiency */}
+                     <div className="row">
+                         <div className="col-6">
+                             <strong><StringTranslator>Efficiency</StringTranslator></strong>
+                         </div>
+                         <div className="col-6">
+                             <input name="EfficiencyInput"
+                                 className="form-control text-center"
+                                 type="text"
+                                 value={(ShowRunShift === "Run" ? Equipment.EfficiencyRun.toFixed(2) : Equipment.EfficiencyShift.toFixed(2)) + " %"}
+                                 disabled={true}
+                             />
+                         </div>
+                     </div>
+                     {/* Fault */}
+                     {Equipment.EquipmentStatus === 0 && Equipment.ActiveFault !== "" &&
+                         <div className="row">
+                             <div className="col-6">
+                                 <strong><StringTranslator>Active Fault</StringTranslator></strong>
+                             </div>
+                             <div className="col-6">
+                                 <textarea name="ActiveFaultInput"
+                                     className="form-control"
+                                     rows={3}
+                                     value={Equipment.ActiveFault}
+                                     readOnly={true}
+                                 />
+                             </div>
+                         </div>
+                     }
+                     {/* Speed */}
+                     <div className="row">
+                         <div className="col-6">
+                             <strong><StringTranslator>Speed</StringTranslator></strong>
+                         </div>
+                         <div className="col-6">
+                             <input name="SpeedInput"
+                                 className="form-control text-center"
+                                 type="text"
+                                 value={Equipment.Speed}
+                                 disabled={true}
+                             />
+                         </div>
+                     </div>
+                     {/* MTTR */}
+                     <div className="row">
+                         <div className="col-6">
+                             <strong><StringTranslator>MTTR</StringTranslator></strong>
+                         </div>
+                         <div className="col-6">
+                             <input name="MTTRInput"
+                                 className="form-control text-center"
+                                 type="text"
+                                 value={ShowRunShift === "Run" ? Equipment.MTTRRun.toFixed(2) : Equipment.MTTRShift.toFixed(2)}
+                                 disabled={true}
+                             />
+                         </div>
+                     </div>
+                     {/* MTBF */}
+                     <div className="row">
+                         <div className="col-6">
+                             <strong><StringTranslator>MTBF</StringTranslator></strong>
+                         </div>
+                         <div className="col-6">
+                             <input name="MTBFInput"
+                                 className="form-control text-center"
+                                 type="text"
+                                 value={ShowRunShift === "Run" ? Equipment.MTBFRun.toFixed(2) : Equipment.MTBFShift.toFixed(2)}
+                                 disabled={true}
+                             />
+                         </div>
+                     </div>
+                     {/* Stops */}
+                     <div className="row">
+                         <div className="col-6">
+                             <strong><StringTranslator>Stops [Und/Tot]</StringTranslator></strong>
+                         </div>
+                         <div className="col-6">
+                             <input name="MTBFInput"
+                                 className="form-control text-center"
+                                 type="text"
+                                 value={Equipment.UndeclaredStops + "/" + (Equipment.UndeclaredStops + Equipment.DeclaredStops)}
+                                 disabled={true}
+                             />
+                         </div>
+                     </div>
+                     {/* Top1 */}
+                     {Equipment.TopCause1Duration > 0 &&
+                         <div className="row">
+                             <div className="col-6">
+                                 <strong><StringTranslator>Top 1 Stop</StringTranslator></strong>
+                             </div>
+                             <div className="col-6">
+                                 <textarea name="Top1StopInput"
+                                     className="form-control"
+                                     readOnly={true}
+                                     value={Equipment.TopCause1Duration.toFixed(2) + " " + translateString("min") + " -" + Equipment.TopCause1}
+                                 />
+                             </div>
+                         </div>
+                     }
+                     {/* Top2 */}
+                     {Equipment.TopCause2Duration > 0 &&
+                         <div className="row">
+                             <div className="col-6">
+                                 <strong><StringTranslator>Top 2 Stop</StringTranslator></strong>
+                             </div>
+                             <div className="col-6">
+                                 <textarea name="Top2StopInput"
+                                     className="form-control"
+                                     readOnly={true}
+                                     value={Equipment.TopCause2Duration.toFixed(2) + " " + translateString("min") + " -" + Equipment.TopCause2}
+                                 />
+                             </div>
+                         </div>
+                     }
+                 </div>
+             </div>
+         );
+ 
+         this.setState({
+             ShowAlertDialog: true,
+             AlertDialogTitle: Equipment.MachineDesc,
+             AlertDialogContent: equipmentInfo
+         })
+     }
+ 
+     renderEquipmentCard = (Equipment: EquipmentStatusInterface, Index: number, CardWidth: number) => {
+         return(
+             <div key={Index} className="p-2 d4a-clickable" style={{width:(CardWidth + "px")}} onClick={() => {this.showEquipmentCardDetails(Equipment)}}>
+                 <div className="card">
+                     <div className="card-header">
+                         <strong>{Equipment.MachineDesc}</strong>
+                     </div>
+                     <div className="card-body">
+                         <div className="row">
+                             <div className="col-3 p-0">
+                                 {Equipment.ImagePath !== "" && 
+                                     <img style={{ margin: 'auto', width:"100%" }} className="card-img-top" src={String(require(`../../../Images/Equipments/${Equipment.ImagePath}.png`))} />
+                                 }
+                             </div>
+                             <div className="col-9 p-0">
+                                 {Equipment.BypassModeActive ? 
+                                     <div>
+                                         <input className="text-center font-weight-bold"
+                                             style={{ backgroundColor: "#f5c71a", fontSize:"12px", padding:"0", color:"#202020", width:"100%"}} 
+                                             disabled={true}
+                                             value={translateString("Verification Bypassed")} 
+                                         />
+                                     </div>
+                                     : <div />
+                                 }
+                                 <h6 className="text-center" style={{color:"white", backgroundColor:this.getStatusColor(Equipment.EquipmentStatus)}}>
+                                     {translateString(Equipment.EquipmentStatusDescription)}
+                                 </h6>
+                                 <div style={{fontSize:"12px"}} >
+                                     <strong><StringTranslator>Efficiency</StringTranslator>:</strong>&nbsp;
+                                     {this.state.ShowRunShift === "Run" ? Equipment.EfficiencyRun.toFixed(2) : Equipment.EfficiencyShift.toFixed(2)}%
+                                 </div>
+                                 <div style={{fontSize:"12px"}} >
+                                     <strong><StringTranslator>Speed</StringTranslator>:</strong>&nbsp;{Equipment.Speed}
+                                 </div>
+                                 <div style={{fontSize:"12px"}} >
+                                     <strong><StringTranslator>Stops [Und/Tot]</StringTranslator>:</strong>&nbsp;{Equipment.UndeclaredStops}/{Equipment.DeclaredStops + Equipment.UndeclaredStops}
+                                 </div>
+                                 {Equipment.EquipmentStatus === 0 &&
+                                     <div style={{fontSize:"12px"}} >
+                                         <strong><StringTranslator>Fault</StringTranslator>:</strong>&nbsp;{Equipment.ActiveFault}
+                                     </div>
+                                 }
+                                 {Equipment.OrderNum !== null &&
+                                     <div style={{fontSize:"12px"}} >
+                                         <strong><StringTranslator>Order #</StringTranslator>:</strong>&nbsp;{Equipment.OrderNum}
+                                     </div>
+                                 }
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+         )
+     } 
+ 
+     getDialogContent = (dialogTitle: string) => {
+         let {ShowRunShift, LineStatusDisplayData, ExcludeStandardCO} = this.state;
+ 
+         switch (dialogTitle) {
+             case "Availability":
+                 return (
+                     <div className="card">
+                         {/* <div className="card-header">
+                             <strong><StringTranslator>Availability</StringTranslator></strong>
+                         </div> */}
+                         <div className="card-body">
+                             {/* RunTime */}
+                             <div className="row">
+                                 <div className="col-6 text-right">
+                                     <label htmlFor="RunTimeInput"><strong><StringTranslator>Run Time</StringTranslator></strong></label>
+                                 </div>
+                                 <div className="col-6">
+                                     <input type="text"
+                                         className="form-control text-right"
+                                         name="RunTimeInput"
+                                         readOnly={true}
+                                         value={ShowRunShift === "Shift" ? LineStatusDisplayData?.RunTimeShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) 
+                                             : LineStatusDisplayData?.RunTimeRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                     />
+                                 </div>
+                             </div>
+                             {/* StopTime */}
+                             <div className="row">
+                                 <div className="col-6 text-right">
+                                     <label htmlFor="StopTimeInput"><strong><StringTranslator>Stop Time</StringTranslator></strong></label>
+                                 </div>
+                                 <div className="col-6">
+                                     <input type="text"
+                                         className="form-control text-right"
+                                         name="StopTimeInput"
+                                         readOnly={true}
+                                         value={ShowRunShift === "Shift" ? LineStatusDisplayData?.StopTimeShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) 
+                                             : LineStatusDisplayData?.StopTimeRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                     />
+                                 </div>
+                             </div>
+                             {/* BackedUpTime */}
+                             <div className="row">
+                                 <div className="col-6 text-right">
+                                     <label htmlFor="BackedUpTimeInput"><strong><StringTranslator>Backed-Up Time</StringTranslator></strong></label>
+                                 </div>
+                                 <div className="col-6">
+                                     <input type="text"
+                                         className="form-control text-right"
+                                         name="BackedUpTimeInput"
+                                         readOnly={true}
+                                         value={ShowRunShift === "Shift" ? LineStatusDisplayData?.BackedupTimeShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) 
+                                             : LineStatusDisplayData?.BackedupTimeRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                     />
+                                 </div>
+                             </div>
+                             {/* StarvedTime */}
+                             <div className="row">
+                                 <div className="col-6 text-right">
+                                     <label htmlFor="StarvedTimeInput"><strong><StringTranslator>Starved Time</StringTranslator></strong></label>
+                                 </div>
+                                 <div className="col-6">
+                                     <input type="text"
+                                         className="form-control text-right"
+                                         name="StarvedTimeInput"
+                                         readOnly={true}
+                                         value={ShowRunShift === "Shift" ? LineStatusDisplayData?.StarvedTimeShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) 
+                                         : LineStatusDisplayData?.StarvedTimeRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                     />
+                                 </div>
+                             </div>
+                             {/* Availability */}
+                             <div className="row">
+                                 <div className="col-6 text-right">
+                                     <label htmlFor="AvailabilityInput"><strong><StringTranslator>Availability</StringTranslator></strong></label>
+                                 </div>
+                                 <div className="col-6">
+                                     <input type="text"
+                                         className="form-control text-right"
+                                         name="AvailabilityInput"
+                                         readOnly={true}
+                                         value={(ShowRunShift === "Shift" ? LineStatusDisplayData?.AvailabilityShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) 
+                                             : LineStatusDisplayData?.AvailabilityRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})) + " %"}
+                                     />
+                                 </div>
+                             </div>
+                             
+                         </div>
+                     </div>
+                 )
+                 break;
+             case "Performance":
+                 let runTimeUnitsRun = (LineStatusDisplayData ? LineStatusDisplayData.RunTimeRun * LineStatusDisplayData.RatedSpeedBPM : 0);
+                 let runTimeUnitsShift = (LineStatusDisplayData ? LineStatusDisplayData.RunTimeShift * LineStatusDisplayData.RatedSpeedBPM : 0);
+                 let stopTimeUnitsRun = (LineStatusDisplayData ? LineStatusDisplayData.StopTimeRun * LineStatusDisplayData.RatedSpeedBPM : 0);
+                 let stopTimeUnitsShift = (LineStatusDisplayData ? LineStatusDisplayData.StopTimeShift * LineStatusDisplayData.RatedSpeedBPM : 0);
+                 let starvedTimeUnitsRun = (LineStatusDisplayData ? LineStatusDisplayData.StarvedTimeRun * LineStatusDisplayData.RatedSpeedBPM : 0);
+                 let starvedTimeUnitsShift = (LineStatusDisplayData ? LineStatusDisplayData.StarvedTimeShift * LineStatusDisplayData.RatedSpeedBPM : 0);
+                 let backedupTimeUnitsRun = (LineStatusDisplayData ? LineStatusDisplayData.BackedupTimeRun * LineStatusDisplayData.RatedSpeedBPM : 0);
+                 let backedupTimeUnitsShift = (LineStatusDisplayData ? LineStatusDisplayData.BackedupTimeShift * LineStatusDisplayData.RatedSpeedBPM : 0);
+                 let changeoverTimeUnitsRun = (LineStatusDisplayData ? LineStatusDisplayData.ChangeoverTimeRun * LineStatusDisplayData.RatedSpeedBPM : 0);
+                 let changeoverTimeUnitsShift = (LineStatusDisplayData ? LineStatusDisplayData.ChangeoverTimeShift * LineStatusDisplayData.RatedSpeedBPM : 0);
+                 let stdCOTimeUnitsRun = ExcludeStandardCO ? 0 : (LineStatusDisplayData ? LineStatusDisplayData.StandardCOTimeRun * LineStatusDisplayData.RatedSpeedBPM : 0);
+                 let stdCOTimeUnitsShift = ExcludeStandardCO ? 0 : (LineStatusDisplayData ? LineStatusDisplayData.StandardCOTimeShift * LineStatusDisplayData.RatedSpeedBPM : 0);
+                 let totalPotentialUnitsRun = runTimeUnitsRun + stopTimeUnitsRun + starvedTimeUnitsRun + backedupTimeUnitsRun + changeoverTimeUnitsRun - stdCOTimeUnitsRun;
+                 let totalPotentialUnitsShift = runTimeUnitsShift + stopTimeUnitsShift + starvedTimeUnitsShift + backedupTimeUnitsShift + changeoverTimeUnitsShift - stdCOTimeUnitsShift;
+ 
+                 return (
+                     <div className="card">
+                         {/* <div className="card-header">
+                             <strong><StringTranslator>Performance</StringTranslator></strong>
+                         </div> */}
+                         <div className="card-body">
+                             <table className="table table-striped">
+                                 <thead className="thead-dark">
+                                     <tr>
+                                         <th></th>
+                                         <th className="text-right"><StringTranslator>Time</StringTranslator></th>
+                                         <th className="text-right"><StringTranslator>Potential Units</StringTranslator></th>
+                                     </tr>
+                                 </thead>
+                                 <tbody>
+                                     {/* Run Time */}
+                                     <tr>
+                                         <td><StringTranslator>Run</StringTranslator></td>
+                                         <td className="text-right">
+                                             {ShowRunShift === "Run" ? LineStatusDisplayData?.RunTimeRun.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2}) 
+                                                 : LineStatusDisplayData?.RunTimeShift.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}
+                                         </td>
+                                         <td className="text-right">
+                                             {ShowRunShift === "Run" ? runTimeUnitsRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                                 : runTimeUnitsShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                         </td>
+                                     </tr>
+                                     {/* Stop time */}
+                                     <tr>
+                                         <td><StringTranslator>Stop</StringTranslator></td>
+                                         <td className="text-right">
+                                             {ShowRunShift === "Run" ? LineStatusDisplayData?.StopTimeRun.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2}) 
+                                                 : LineStatusDisplayData?.StopTimeShift.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}
+                                         </td>
+                                         <td className="text-right">
+                                             {ShowRunShift === "Run" ? stopTimeUnitsRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                                 : stopTimeUnitsShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                         </td>
+                                     </tr>
+                                     {/* Starved time */}
+                                     <tr>
+                                         <td><StringTranslator>Starved</StringTranslator></td>
+                                         <td className="text-right">
+                                             {ShowRunShift === "Run" ? LineStatusDisplayData?.StarvedTimeRun.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2}) 
+                                                 : LineStatusDisplayData?.StarvedTimeShift.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}
+                                         </td>
+                                         <td className="text-right">
+                                             {ShowRunShift === "Run" ? starvedTimeUnitsRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                                 : starvedTimeUnitsShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                         </td>
+                                     </tr>
+                                     {/* BackedUp time */}
+                                     <tr>
+                                         <td><StringTranslator>Backed Up</StringTranslator></td>
+                                         <td className="text-right">
+                                             {ShowRunShift === "Run" ? LineStatusDisplayData?.BackedupTimeRun.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2}) 
+                                                 : LineStatusDisplayData?.BackedupTimeShift.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}
+                                         </td>
+                                         <td className="text-right">
+                                             {ShowRunShift === "Run" ? backedupTimeUnitsRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                                 : backedupTimeUnitsShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                         </td>
+                                     </tr>
+                                     {/* Changeover time */}
+                                     <tr>
+                                         <td><StringTranslator>Changeover</StringTranslator></td>
+                                         <td className="text-right">
+                                             {ShowRunShift === "Run" ? LineStatusDisplayData?.ChangeoverTimeRun.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2}) 
+                                                 : LineStatusDisplayData?.ChangeoverTimeShift.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}
+                                         </td>
+                                         <td className="text-right">
+                                             {ShowRunShift === "Run" ? changeoverTimeUnitsRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                                 : changeoverTimeUnitsShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                         </td>
+                                     </tr>
+                                     {/* StdChangeover time */}
+                                     {!ExcludeStandardCO &&
+                                         <tr>
+                                             <td><StringTranslator>Standard Changeover</StringTranslator></td>
+                                             <td className="text-right">
+                                                 {ShowRunShift === "Run" ? LineStatusDisplayData?.StandardCOTimeRun.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2}) 
+                                                     : LineStatusDisplayData?.StandardCOTimeShift.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}
+                                             </td>
+                                             <td className="text-right">
+                                                 {"-" + (ShowRunShift === "Run" ? stdCOTimeUnitsRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                                     : stdCOTimeUnitsShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}))}
+                                             </td>
+                                         </tr>
+                                     }
+                                     {/* Total Potential Units */}
+                                     <tr>
+                                         <td></td>
+                                         <td className="text-right"><strong><StringTranslator>Potential Units</StringTranslator></strong></td>
+                                         <td className="text-right">
+                                             {ShowRunShift === "Run" ? totalPotentialUnitsRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                                 : totalPotentialUnitsShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                         </td>
+                                     </tr>
+                                     {/* Actual Units */}
+                                     <tr>
+                                         <td></td>
+                                         <td className="text-right"><strong><StringTranslator>Actual Units</StringTranslator></strong></td>
+                                         <td className="text-right">
+                                             {ShowRunShift === "Run" ? LineStatusDisplayData?.PackagesThisRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                                 : LineStatusDisplayData?.PackagesThisShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                         </td>
+                                     </tr>
+                                     {/* Performance */}
+                                     <tr>
+                                         <td></td>
+                                         <td className="text-right"><strong><StringTranslator>Performance</StringTranslator></strong></td>
+                                         <td className="text-right">
+                                             {(ShowRunShift === "Run" ? LineStatusDisplayData?.PerformanceRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                                 : LineStatusDisplayData?.PerformanceShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})) + " %"}
+                                         </td>
+                                     </tr>
+                                 </tbody>
+                             </table>
+                         </div>
+                     </div>
+                 )
+                 break;
+             case "Quality":
+                 return (
+                     <div className="card">
+                         {/* <div className="card-header">
+                             <strong><StringTranslator>Quality</StringTranslator></strong>
+                         </div> */}
+                         <div className="card-body">
+                             {/* Packages */}
+                             <div className="row">
+                                 <div className="col-6 text-right">
+                                     <strong><label htmlFor="PackagesInput"><StringTranslator>Packages</StringTranslator></label></strong>
+                                 </div>
+                                 <div className="col-6">
+                                     <input name="PackagesInput"
+                                         className="form-control text-right"
+                                         disabled={true}
+                                         value={ShowRunShift === "Run" ? LineStatusDisplayData?.PackagesThisRun.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})
+                                             : LineStatusDisplayData?.PackagesThisShift.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}
+                                     />
+                                 </div>
+                             </div>
+                             {/* Rejects */}
+                             <div className="row">
+                                 <div className="col-6 text-right">
+                                     <strong><label htmlFor="RejectsInput"><StringTranslator>Rejects</StringTranslator></label></strong>
+                                 </div>
+                                 <div className="col-6">
+                                     <input name="RejectsInput"
+                                         className="form-control text-right"
+                                         disabled={true}
+                                         value={ShowRunShift === "Run" ? LineStatusDisplayData?.RejectsThisRun.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})
+                                             : LineStatusDisplayData?.RejectsThisShift.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}
+                                     />
+                                 </div>
+                             </div>
+                             {/* Quality */}
+                             <div className="row">
+                                 <div className="col-6 text-right">
+                                     <strong><label htmlFor="QualityInput"><StringTranslator>Quality</StringTranslator></label></strong>
+                                 </div>
+                                 <div className="col-6">
+                                     <input name="QualityInput"
+                                         className="form-control text-right"
+                                         disabled={true}
+                                         value={(ShowRunShift === "Run" ? LineStatusDisplayData?.QualityRun.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})
+                                             : LineStatusDisplayData?.QualityShift.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})) + " %"}
+                                     />
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
+                 );
+                 break;
+             case "OEE":
+                 return (
+                     <div className="card">
+                         {/* <div className="card-header">
+                             <strong><StringTranslator>OEE</StringTranslator></strong>
+                         </div> */}
+                         <div className="card-body">
+                             {/* Availability */}
+                             <div className="row">
+                                 <div className="col-6 text-right">
+                                     <strong><label htmlFor="AvailabilityInput"><StringTranslator>Availability</StringTranslator></label></strong>
+                                 </div>
+                                 <div className="col-6">
+                                     <input name="AvailabilityInput"
+                                         className="form-control text-right"
+                                         disabled={true}
+                                         value={(ShowRunShift === "Run" ? LineStatusDisplayData?.AvailabilityRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                             : LineStatusDisplayData?.AvailabilityShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})) + " %"}
+                                     />
+                                 </div>
+                             </div>
+                             {/* Performance */}
+                             <div className="row">
+                                 <div className="col-6 text-right">
+                                     <strong><label htmlFor="PerformanceInput"><StringTranslator>Performance</StringTranslator></label></strong>
+                                 </div>
+                                 <div className="col-6">
+                                     <input name="PerformanceInput"
+                                         className="form-control text-right"
+                                         disabled={true}
+                                         value={(ShowRunShift === "Run" ? LineStatusDisplayData?.PerformanceRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                             : LineStatusDisplayData?.PerformanceShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})) + " %"}
+                                     />
+                                 </div>
+                             </div>
+                             {/* Quality */}
+                             <div className="row">
+                                 <div className="col-6 text-right">
+                                     <strong><label htmlFor="QualityInput"><StringTranslator>Quality</StringTranslator></label></strong>
+                                 </div>
+                                 <div className="col-6">
+                                     <input name="QualityInput"
+                                         className="form-control text-right"
+                                         disabled={true}
+                                         value={(ShowRunShift === "Run" ? LineStatusDisplayData?.QualityRun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                             : LineStatusDisplayData?.QualityShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})) + " %"}
+                                     />
+                                 </div>
+                             </div>
+                             {/* OEE */}
+                             <div className="row">
+                                 <div className="col-6 text-right">
+                                     <strong><label htmlFor="OEEInput"><StringTranslator>OEE</StringTranslator></label></strong>
+                                 </div>
+                                 <div className="col-6">
+                                     <input name="OEEInput"
+                                         className="form-control text-right"
+                                         disabled={true}
+                                         value={(ShowRunShift === "Run" ? LineStatusDisplayData?.OEERun.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                                             : LineStatusDisplayData?.OEEShift.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})) + " %"}
+                                     />
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
+                 );
+                 break;
+             default:
+                 return (
+                     <div><h3>Data Unavailable</h3></div>
+                 )
+                 break;
+         }
+     }
+ 
+     showDetailsDialog = (dialogTitle: string) => {
+         let dialogContent = this.getDialogContent(dialogTitle);
+         this.setState({
+             ShowAlertDialog: true,
+             AlertDialogTitle: translateString(dialogTitle),
+             AlertDialogContent: dialogContent
+         });
+     }
+ 
+     closeAlertDialog = () => {
+         this.setState({
+             ShowAlertDialog: false,
+             AlertDialogTitle: "",
+             AlertDialogContent: "",
+             ShowChartModal: false,
+             ChartModalTitle: "",
+             ChartModalContent: ""
+         })
+     }
+ 
+     showRejectDetails = (aReject: RTRejectInterface) => {
+         let {server, SelectedLineID} = this.state;
+ 
+         let apiCallURL = server + "/api/getRealTimeRejectsDetailsPerPeriod/" + SelectedLineID + "/0/" + aReject.RejectType;
+ 
+         axios.get(apiCallURL)
+         .then(res => {
+             if (res.data.length > 0) {
+                 let dataTable = (
+                     <table className="table table-striped">
+                         <thead className="thead-dark">
+                             <tr>
+                                 <th>Time</th>
+                                 <th>Equipment</th>
+                                 <th>Cases</th>
+                             </tr>
+                         </thead>
+                         <tbody>
+                             {res.data.map((aRecord, rIndex) => {
+                                 let recordDate = Moment.parseZone(aRecord.RejectDateTime).format("LT");
+                                 return (
+                                     <tr key={rIndex}>
+                                         <td>{recordDate}</td>
+                                         <td>
+                                             {aRecord.Equipment}
+                                         </td>
+                                         <td className="text-right">
+                                             {aRecord.RejectCases.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                         </td>
+                                     </tr>
+                                 )
+                             })}
+                         </tbody>
+                     </table>
+                 );
+                 
+                 this.setState({
+                     ShowAlertDialog: true,
+                     AlertDialogTitle: translateString("Rejects"),
+                     AlertDialogContent: dataTable
+                 })
+             } else {
+                 this.setState({
+                     ShowAlertDialog: true,
+                     AlertDialogTitle: translateString("Rejects"),
+                     AlertDialogContent: (<div><h3><StringTranslator>Data Not Available</StringTranslator></h3></div>)
+                 })
+             }
+         })
+         .catch(error => {
+             errorLogMessages(error);
+             console.log("Error excuting api/getRealTimeRejectsDetailsPerPeriod", error)
+         })
+     }
+ 
+     showSpeedChart = () => {
+         let {server, SelectedLineID} = this.state;
+ 
+         let apiCallURL = server + "/api/getRealTimeMachineSpeed/" + SelectedLineID + "/0";
+ 
+         axios.get(apiCallURL)
+         .then(res => {
+             if (res.data.length > 0) {
+                 let speedChart = (
+                     <div style={{width:"100%", height:"40vh"}}>
+                         <D4ALineChart UniqueID={uuidv4()} 
+                             Data={res.data}
+                             XAxisColumn="SampleDateTime"
+                             XAxisTitle="Time"
+                             YAxisColumns={[{column: "Speed", label:translateString("Speed"), showAxis: true}]}
+                         />
+                     </div>
+                 );
+                 
+                 this.setState({
+                     ShowChartModal: true,
+                     ChartModalTitle: translateString("Speed"),
+                     ChartModalContent: speedChart
+                 })
+             } else {
+                 this.setState({
+                     ShowAlertDialog: true,
+                     AlertDialogTitle: translateString("Speed"),
+                     AlertDialogContent: (<div><h3><StringTranslator>Data Not Available</StringTranslator></h3></div>)
+                 })
+             }
+         })
+         .catch(error => {
+             errorLogMessages(error);
+             console.log("Error excuting api/getRealTimeRejectsDetailsPerPeriod", error)
+         })
+     }
+ 
+     showCasesChart = () => {
+         this.setState({
+             ShowAlertDialog: true,
+             AlertDialogTitle: translateString("Cases"),
+             AlertDialogContent: (<div><h3>Cases Waterfal Chart Here</h3></div>)
+         })
+     }
+ 
+     showFillerHistogramChart = () => {
+         const {server, SelectedLineID, EquipmentArray} = this.state;
+         let todaysDate = Moment().format('YYYY-MM-DD');
+ 
+         let constraintMachinesIDs = EquipmentArray.filter(x => x.LineID.toString() === SelectedLineID && x.IsConstraintMachine).map(x => x.MachineID);
+ 
+         let apiCallURL = server + "/api/getlosttimeevents/" + todaysDate + "/" + todaysDate + "/0/" + SelectedLineID;
+ 
+         axios.get(apiCallURL)
+         .then(res => {
+             if (res.data.length > 0) {
+                 //filter the responses so we only pickup the constaint machine(s)
+                 let filteredData = res.data.filter(x => constraintMachinesIDs.indexOf(x.EquipID) > -1);
+ 
+                 if (filteredData.length > 0) {
+                     //build the data arrays needed for the chart
+                     //first group the array by machine id
+                     let grouppedData = new Array();
+                     constraintMachinesIDs.forEach((aMachineID, mIndex) => {
+                         grouppedData.push(new Array());
+                     })
+                     filteredData.forEach((anEvent, eIndex) => {
+                         let equipmentID = anEvent.EquipID;
+                         let gIndex = constraintMachinesIDs.indexOf(equipmentID);
+                         if (gIndex !== -1) {
+                             grouppedData[gIndex].push(anEvent);
+                         }
+                     });
+ 
+                     let histogram = this.getHistogram(grouppedData);
+                     
+                     this.setState({
+                         ShowChartModal: true,
+                         ChartModalTitle: translateString("Histogram"),
+                         ChartModalContent: histogram
+                     })
+                 } else {
+                     this.setState({
+                         ShowAlertDialog: true,
+                         AlertDialogTitle: translateString("No Data"),
+                         AlertDialogContent: translateString("There is no data to show in the histogram.")
+                     })
+                 }
+             } else {
+                 this.setState({
+                     ShowAlertDialog: true,
+                     AlertDialogTitle: translateString("No Data"),
+                     AlertDialogContent: translateString("There is no data to show in the histogram.")
+                 })
+             }
+         })
+         .catch(error => {
+             errorLogMessages("Error executing /api/getLostTimeEvents. " + error);
+             console.log("Error executing /api/getLostTimeEvents", error);
+         });
+ 
+     }
+ 
+     getHistogram(events) {
+         let startDate = Moment().format("MM-DD-YYYY")
+         let tempKeys = new Array()
+         let tempData = new Array()
+         events.map(eventsdata => {
+             let keysindivudual = new Array()
+             let dataIndividual = {}
+             let dataArray = new Array()
+ 
+             eventsdata.map((event, index) => {
+                 // if (index === 1) { console.log(Moment.parseZone(event.EventStart).format("MM-DD-YYYY hh:mm a")) }
+                 if (!keysindivudual.includes(event.EventStart + event.EventType + event.UserDescription)) {
+                     let keyval = event.EventStart + event.EventType + event.UserDescription
+                     keysindivudual.push(keyval)
+                     dataIndividual["equipment"] = event.UserDescription
+                     dataIndividual[keyval] = event.EventDuration
+                     dataIndividual[keyval + "status"] = event.EventType
+                     dataIndividual[keyval + "start"] = Moment.parseZone(event.EventStart).format("MM-DD-YYYY hh:mm a")
+                     dataIndividual[keyval + "end"] = Moment.parseZone(event.EventEnd).format("MM-DD-YYYY hh:mm a")
+                     dataIndividual[keyval + "productDesc"] = event.ProdDesc
+                     dataIndividual[keyval + "shift"] = event.Shift
+                     dataIndividual[keyval + "stopDesc"] = event.StopDesc
+                     dataIndividual[keyval + "comments"] = event.Comments
+                     dataIndividual[keyval + "autoCause"] = event.AutoCauseDetected
+                     dataIndividual[keyval + "techInitials"] = event.MechanicInitials
+                     dataIndividual[keyval + "nextProduct"] = event.NextProdDesc
+                     dataIndividual[keyval + "tooltip"] = event.LabelDesc
+                     dataIndividual[keyval + "recordID"] = event.RecordID
+ 
+                     let eventType = event.EventType
+                     switch (eventType) {
+                         case "Run":
+                             dataIndividual[keyval + "Color"] = "#66B032"
+                             break;
+                         case "Starved":
+                             dataIndividual[keyval + "Color"] = "#E2D500"
+                             break;
+                         case "Stopped":
+                             dataIndividual[keyval + "Color"] = "#CD071E"
+                             // "hsl(9, 70%, 45%)"
+                             break;
+                         case "Changeover":
+                             dataIndividual[keyval + "Color"] = "#FF4500"
+                             break;
+                         case "Backed Up":
+                             dataIndividual[keyval + "Color"] = "#00A9FF"
+                             break;
+                         case "Removed From Production":
+                             dataIndividual[keyval + "Color"] = "#994fcd"
+                             break;
+                         case "Not Scheduled":
+                             dataIndividual[keyval + "Color"] = "#6D6D6D"
+                             break;
+                         case "CIP":
+                             dataIndividual[keyval + "Color"] = "#40e0d0"
+                             break;
+                         case "Maintenance mode":
+                             dataIndividual[keyval + "Color"] = "#ff77ff"
+                             break;
+                         default:
+                             break; 
+                     }
+ 
+                 }
+             })
+             dataArray.push(dataIndividual)
+             tempKeys.push(keysindivudual)
+             tempData.push(dataArray)
+         })
+         let intervalVal = 21600 / 700 //Interval value for previous 6 hours (21600 seconds)
+ 
+         let intervalArr = new Array();
+         let i;
+ 
+         for (i = 0; i <= 12; i++) {
+             if (i !== 0) {
+                 let val = intervalArr[i - 1] + intervalVal
+                 intervalArr.push(val)
+             }
+             else {
+                 intervalArr.push(0)
+             }
+         }z
+ 
+         let start = (typeof events[0]["0"] === 'undefined') ? startDate : events[0]["0"].EventStart;
+         console.log("startDateForGraph", start);
+         console.log("interval =", intervalArr);
+         console.log("graphdata =", tempData);
+         console.log("keys =", tempKeys);
+ 
+         return (
+             <div className="nivoawesome" key={0} >
+                 {tempData.map((aDataSet, dsIndex) => {
+                     return(
+                         <Barcanvastest key={dsIndex} 
+                             startDate={start}
+                             endDate={Moment().format("MM-DD-YYYY")}
+                             tickValues={intervalArr}
+                             data={aDataSet} 
+                             keys={tempKeys[dsIndex]}
+                             getSelectedEventInfo={(e) => this.getSelectedEvent(e)}
+                             format={"MM/DD HH:mm"}
+                         />
+                     )
+                 })}
+                 <div className="row legendparent no-padding mb-4">
+                     <div className="col-12 col-sm-12 col-md-12 col-lg-12 col-xl-12 no-padding">
+                         <span className="mr-1 ml-3 stop col-12 col-sm-10 col-md-2 col-lg-2 col-xl-2 " /><span className="statsColor"> <StringTranslator>Stopped</StringTranslator> </span>
+                         <span className="mr-1 ml-3 run col-12 col-sm-10 col-md-2 col-lg-2 col-xl-2" /><span className="statsColor"> <StringTranslator>Running</StringTranslator> </span>
+                         <span className="mr-1 ml-3 starved col-12 col-sm-10 col-md-2 col-lg-2 col-xl-2" /><span className="statsColor"> <StringTranslator>Starved</StringTranslator> </span>
+                         <span className="mr-1 ml-3 backedUp col-12 col-sm-10 col-md-2 col-lg-2 col-xl-2" /><span className="statsColor"> <StringTranslator>Backed Up</StringTranslator> </span>
+                         <span className="mr-1 ml-3 changeover col-12 col-sm-10 col-md-2 col-lg-2 col-xl-2" /><span className="statsColor"> <StringTranslator>Change Over</StringTranslator> </span>
+                         <span className="mr-1 ml-3 notScheduled col-12 col-sm-10 col-md-2 col-lg-2 col-xl-2" /><span className="statsColor"> <StringTranslator>Not Scheduled</StringTranslator> </span>
+                         <span className="mr-1 ml-3 removed col-12 col-sm-10 col-md-2 col-lg-2 col-xl-2" /><span className="statsColor"> <StringTranslator>Removed from Prod.</StringTranslator> </span>
+                     </div>
+                 </div>
+             </div>
+         );
+     }
+ 
+     getSelectedEvent = (info) => {
+         //do nothing. No need to bring up another dialog on top of a modal.
+     }
+ 
+     render () {
+         let {PageTitle, ShowRunShift, SelectedLineID, LinesArray, LineStatusDisplayData, 
+             EquipmentArray, CPHDataArray, RealTimeRejectsArray,
+             ShowChartModal, ChartModalTitle, ChartModalContent
+         } = this.state;
+ 
+         const equipmentCardWidth = 280;
+         // console.log("OEEDashboard State", this.state);
+ 
+         return (
+             <div>
+                 <LinkTitle defaultTitle={PageTitle} />
+                 {/* Header Information */}
+                 <div className="BoldMetrics m-2 mr-4">
+                     <div className="d-flex flex-row" style={{ justifyContent: 'space-between'}}>
+                         {/* Product */}
+                         <div className="ml-1 py-2">
+                             <span id="metriclabel" className="font-weight-bold"><StringTranslator>Product</StringTranslator>:&nbsp;{LineStatusDisplayData?.ProductDescription}</span>
+                             <br />
+                             <div style={{paddingTop: '5px'}}>
+                             <span id="metriclabel" className="font-weight-bold" style={{paddingTop:'4px'}}><StringTranslator>Production Date</StringTranslator>:&nbsp;{LineStatusDisplayData?.ProductionDateFormatted}</span>
+                             </div>
+                         </div>
+                         {/* <div className="ml-1 py-2"><span>|</span></div> */}
+                         {/* Production Date */}
+                         <div className="ml-1 py-2">
+                         <span id="metriclabel" className="font-weight-bold" style={{paddingLeft: '4px'}}><StringTranslator>Shift</StringTranslator>:&nbsp;{LineStatusDisplayData?.CurrentShift}</span>
+                         <br/>
+                         <div style={{paddingTop: '5px'}}>
+                             <span id="metriclabel" className="d4a-clickable font-weight-bold" onClick={this.toggleShowRunShift}>
+                                 <FontAwesomeIcon icon={ShowRunShift === "Run" ? faDotCircle : faCircle} />
+                                 &nbsp;
+                                 <StringTranslator>Run</StringTranslator>
+                             </span>
+                             &nbsp;&nbsp;
+                             <span id="metriclabel" className="d4a-clickable font-weight-bold" onClick={this.toggleShowRunShift}>
+                                 <FontAwesomeIcon icon={ShowRunShift === "Shift" ? faDotCircle : faCircle} />
+                                 &nbsp;
+                                 <StringTranslator>Shift</StringTranslator>
+                             </span>
+                             </div>
+                         </div>
+                         {/* <div className="ml-1 py-2">
+                             <span>|</span>
+                         </div> */}
+                         {/* Shift */}
+                         <div className="ml-1 py-2">
+                         <span id="metriclabel" className="font-weight-bold"><StringTranslator>Order #</StringTranslator>:&nbsp;{LineStatusDisplayData?.OrderNum}</span>
+                         <span id="metriclabel" className="font-weight-bold" style={{paddingLeft: '13px'}}><StringTranslator>Estimated Completion</StringTranslator>:&nbsp;{LineStatusDisplayData?.OrderEstimatedCompletionFormatted}</span>
+                        <br/>
+                         <div style={{paddingTop: '8px'}}>
+                         <div id="oeeprogress" className="progress d4a-progress" style={{ height:"1rem"}} >
+                                 <div className="progress-bar-striped progress-bar d4a-progress-bar-normal" 
+                                     role="progressbar"
+                                     style={{ 
+                                         width: `${LineStatusDisplayData?.OrderCompletion}%`,
+                                     }}
+                                 ></div>
+                             </div>
+                             </div>
+                         </div>
+                         {/* <div className="fl2"></div> */}
+                         <div className="ml-1 py-2" style={{float:'right'}}>
+                         <span id="metriclabel" className="font-weight-bold"><StringTranslator>Line </StringTranslator></span>
+                         <br/>
+                         <select id="oeeline"
+                                 style={{backgroundColor:'#343a40',color:'white'}}
+                                 name="LineSelect"
+                                 className="custom-select form-control"
+                                 value={SelectedLineID}
+                                 onChange={(e) => {this.setSelectedLine(e.currentTarget.value)}}
+                                   >
+                                 {LinesArray.map((aLine, lIndex) => {
+                                     return(  
+                                         <option key={lIndex} value={aLine.Value}>{aLine.Label}</option>
+                                     )
+                                 })}
+                             </select>    
+                         </div>
+                     </div>
+                   {/* <div className="dropdown-divider" style={{ color: 'white', width: '100%', margin: '0px 0px' }}></div>
+                     <div className="d-flex flex-row">
+                         <div className="ml-1 py-2">
+                             <span className="font-weight-bold"><StringTranslator>Order #</StringTranslator>:&nbsp;{LineStatusDisplayData?.OrderNum}</span>
+                         </div>
+                         <div className="ml-1 py-2"><span>|</span></div>
+                         <div className="ml-1 py-2">
+                             <div className="progress d4a-progress" style={{width: "150px", height:"1rem"}}>
+                                 <div className="progress-bar progress-bar-striped d4a-progress-bar-normal" 
+                                     role="progressbar"
+                                     style={{ 
+                                         width: `${LineStatusDisplayData?.OrderCompletion}%`,
+                                     }}
+                                 ></div>
+                             </div>
+                         </div>
+                         <div className="ml-1 py-2"><span>|</span></div>
+                         <div className="ml-1 py-2">
+                             <span className="font-weight-bold"><StringTranslator>Estimated Completion</StringTranslator>:&nbsp;{LineStatusDisplayData?.OrderEstimatedCompletionFormatted}</span>
+                         </div>
+                     </div> */}
+                 </div>
+                 {/* Line Status + Speedometer charts */}
+                 <div className="row m-2">
+                     <Paper className="col-sm-12 col-md-12 col-lg-3 d-flex align-items-center justify-content-center text-center d4a-clickable" 
+                         style={{height:"150px", backgroundColor: LineStatusDisplayData?.BackgroundColor, color: LineStatusDisplayData?.ForeColor, overflowY: "auto",borderRadius: '5px'}}
+                         onClick={this.showFillerHistogramChart}
+                         >
+                         <span>
+                             <h4><strong>{LineStatusDisplayData?.SCADAStatus}</strong></h4>
+                             {LineStatusDisplayData?.SCADAStatusDurationFormatted}
+                             {LineStatusDisplayData?.MachStoppedFillerDesc !== "" && 
+                                 <div>
+                                     {LineStatusDisplayData?.MachStoppedFillerDesc} - {LineStatusDisplayData?.MachStoppedFillerCauseDesc}
+                                 </div>
+                             }
+                         </span>
+                     </Paper>
+                     <div id="vidgetscolumn" className="col-sm-12 col-md-12 col-lg-9">
+                         <div className="row">
+                             <div className="col-sm-6 col-md-6  col-lg-3 d4a-clickable" style={{height:"150px"}} onClick={(e) => {this.showDetailsDialog("Availability")}}>
+                                 <D4AGauge 
+                                     UniqueID={uuidv4()}
+                                     Title={translateString("Availability")}
+                                     Data={ShowRunShift === "Run" ? (LineStatusDisplayData ? LineStatusDisplayData.AvailabilityRun.toFixed(2) : 0) : (LineStatusDisplayData ? LineStatusDisplayData.AvailabilityShift.toFixed(2) : 0)}
+                                     BoundaryMin={0}
+                                     BoundaryMax={100}
+                                     TargetMin={LineStatusDisplayData?.AvailabilityTarget}
+                                     Aggregator="Sum"
+                                     BoundaryMaxAgg="Sum"
+                                     BoundaryMinAgg="Sum"
+                                     SegmentColorArray={["#7f8c8d", "#2ecc71"]}
+                                     Unit=" %"
+                                 />
+                             </div>
+                             <div className="col-sm-6 col-md-6  col-lg-3 d4a-clickable" style={{height:"150px"}} onClick={(e) => {this.showDetailsDialog("Performance")}}>
+                                 <D4AGauge 
+                                     UniqueID={uuidv4()}
+                                     Title={translateString("Performance")}
+                                     Data={ShowRunShift === "Run" ? (LineStatusDisplayData ? LineStatusDisplayData.PerformanceRun.toFixed(2) : 0) : (LineStatusDisplayData ? LineStatusDisplayData.PerformanceShift.toFixed(2) : 0)}
+                                     BoundaryMin={0}
+                                     BoundaryMax={100}
+                                     TargetMin={LineStatusDisplayData?.PerformanceTarget}
+                                     Aggregator="Sum"
+                                     BoundaryMaxAgg="Sum"
+                                     BoundaryMinAgg="Sum"
+                                     SegmentColorArray={["#7f8c8d", "#2ecc71"]}
+                                     Unit=" %"
+                                 />
+                             </div>
+                             <div className="col-sm-6 col-md-6  col-lg-3 d4a-clickable" style={{height:"150px"}} onClick={(e) => {this.showDetailsDialog("Quality")}}>
+                                 <D4AGauge 
+                                     UniqueID={uuidv4()}
+                                     Title={translateString("Quality")}
+                                     Data={ShowRunShift === "Run" ? (LineStatusDisplayData ? LineStatusDisplayData.QualityRun.toFixed(2) : 0) : (LineStatusDisplayData ? LineStatusDisplayData.QualityShift.toFixed(2) : 0)}
+                                     BoundaryMin={0}
+                                     BoundaryMax={100}
+                                     Aggregator="Sum"
+                                     BoundaryMaxAgg="Sum"
+                                     BoundaryMinAgg="Sum"
+                                     SegmentColorArray={["#7f8c8d", "#2ecc71"]}
+                                     Unit=" %"
+                                 />
+                             </div>
+                             <div className="col-sm-6 col-md-6  col-lg-3 d4a-clickable" style={{height:"150px"}} onClick={(e) => {this.showDetailsDialog("OEE")}}>
+                                 <D4AGauge 
+                                     UniqueID={uuidv4()}
+                                     Title={translateString("OEE")}
+                                     Data={ShowRunShift === "Run" ? (LineStatusDisplayData ? LineStatusDisplayData.OEERun.toFixed(2) : 0) : (LineStatusDisplayData ? LineStatusDisplayData.OEEShift.toFixed(2) : 0)}
+                                     BoundaryMin={0}
+                                     BoundaryMax={100}
+                                     Aggregator="Sum"
+                                     BoundaryMaxAgg="Sum"
+                                     BoundaryMinAgg="Sum"
+                                     SegmentColorArray={["#7f8c8d", "#2ecc71"]}
+                                     Unit=" %"
+                                 />
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+                 {/* CPH Chart, Speeds and Rejects */}
+                 <div className="row m-2">
+                     <div className="col-sm-12 col-md-12 col-lg-6" style={{minHeight:"30vh",backgroundColor:'white',borderRadius: '3px',boxShadow: 'rgba(50, 50, 93, 0.25) 0px 2px 5px -1px, rgba(0, 0, 0, 0.3) 0px 1px 3px -1px'}}>
+                         <D4AComboChart 
+                             UniqueID={uuidv4()}
+                             Title={translateString("CPH")}
+                             Data={CPHDataArray}
+                             DataColumns={[{columnName:"Cases", label:"Cases"}]}
+                             GroupColumn={"DateTimeFormatted"}
+                             TargetColumn={{columnName:"TargetCPH", label:"Target"}}
+                         />
+                     </div>
+                     <div id="vidgetscolumn" className="col-sm-12 col-md-12 col-lg-6"  style={{minHeight:"30vh"}}>
+                     <Grid >
+                         <Grid container xs={12}  style={{backgroundColor: 'white',borderRadius: '3px',padding: '9px',paddingBottom:'32px',boxShadow: 'rgba(0, 0, 0, 0.16) 0px 1px 4px'}}>
+                         <Grid xs={3} >  
+                         <Box  className="mr-1 d4a-clickable"  onClick={this.showSpeedChart} style={{borderLeft: 'non'}}>
+                          <label id="metriclabel"  style={{fontWeight: 'bold',textTransform: 'uppercase'}} ><StringTranslator>CPH</StringTranslator>:</label>
+                             <input type="text"
+                                 className="form-control text-center d4a-clickable"
+                                 disabled={true}
+                                 value={ShowRunShift === "Run" ? LineStatusDisplayData?.CasesPerHourRun.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2}) 
+                                     : LineStatusDisplayData?.CasesPerHourShift.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}/>  
+                             </Box>
+                        </Grid>
+                         <Grid item xs={3}> 
+                         <Box  className="mr-1 d4a-clickable"  onClick={this.showSpeedChart}>
+                             <label id="metriclabel" style={{fontWeight: 'bold',textTransform: 'uppercase'}}><StringTranslator >Target</StringTranslator>:</label>
+                             <input type="text"
+                                 className="form-control text-center  d4a-clickable"
+                                 disabled={true}
+                                 value={LineStatusDisplayData?.TargetCPH.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})} 
+                             />
+                             </Box>
+                         </Grid>
+                         <Grid item xs={3}>
+                         <Box  className="mr-1 d4a-clickable"  onClick={this.showSpeedChart}>
+                         <label id="metriclabel"  style={{fontWeight: 'bold',textTransform: 'uppercase'}}><StringTranslator>Average</StringTranslator>:</label>
+                            <input type="text"
+                                className="form-control text-center d4a-clickable"
+                                disabled={true}
+                                value={LineStatusDisplayData?.AverageCPH.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})} 
+                            />
+                            </Box>
+                         </Grid>
+                         <Grid item xs={3}>
+                         <Box  className="mr-1 d4a-clickable"  onClick={this.showSpeedChart}>
+                         <label id="metriclabel" style={{fontWeight: 'bold',textTransform: 'uppercase'}}><StringTranslator>Total Cases</StringTranslator>:</label>
+                        <input type="text"
+                            className="form-control text-center d4a-clickable"
+                            disabled={true}
+                            value={ShowRunShift === "Run" ? LineStatusDisplayData?.CasesThisRun.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2}) 
+                                : LineStatusDisplayData?.CasesThisShift.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})} 
+                         />
+                        </Box>
+                        </Grid>
+                        </Grid>
+                     </Grid>    
+                     <hr style={{visibility: 'hidden'}}></hr>
+                    <Grid >
+                        <Grid item sm={12} md={12} xs={12} lg={12} xl={12} style={{backgroundColor: 'white'}}>
+                            <Paper style={{borderRadius: '3px',minHeight: '160px'}} >
+                        <table className="table table-striped table-hover">
+                            <thead className="thead-dark">
+                                <tr>
+                                    <th><StringTranslator>Equipment</StringTranslator></th>
+                                    <th className="text-right"><StringTranslator>Rejects</StringTranslator></th>
+                                </tr>
+                            </thead>
+                            <tbody style={{backgroundColor: 'white'}}>
+                                {RealTimeRejectsArray.map((aReject, rIndex) => {
+                                    return (
+                                        <tr key={rIndex} className="d4a-clickable" onClick={() => {this.showRejectDetails(aReject)}}>
+                                            <td>{aReject.Equipment}</td>
+                                            <td className="text-right">{aReject.Count.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                                        </tr>
+                                    )
+                                })}
+                                </tbody>
+                            </table>
+                            </Paper>
+                            </Grid>
+                    </Grid>
+                     </div>
+                     {/* <div className="col-sm-12 col-md-6 col-lg-2">
+                         <div className="d4a-clickable"  onClick={this.showSpeedChart}>
+                             <label className="d4a-clickable"><StringTranslator>CPH</StringTranslator>:</label>
+                             <input type="text"
+                                 className="form-control text-center d4a-clickable"
+                                 disabled={true}
+                                 value={ShowRunShift === "Run" ? LineStatusDisplayData?.CasesPerHourRun.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2}) 
+                                     : LineStatusDisplayData?.CasesPerHourShift.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})} 
+                             />
+                             <label className="d4a-clickable"><StringTranslator>Target</StringTranslator>:</label>
+                             <input type="text"
+                                 className="form-control text-center"
+                                 disabled={true}
+                                 value={LineStatusDisplayData?.TargetCPH.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})} 
+                             />
+                             <label className="d4a-clickable"><StringTranslator>Average</StringTranslator>:</label>
+                             <input type="text"
+                                 className="form-control text-center"
+                                 disabled={true}
+                                 value={LineStatusDisplayData?.AverageCPH.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})} 
+                             />
+                         </div>
+                         <div>
+                             <label className="d4a-clickable"><StringTranslator>Total Cases</StringTranslator>:</label>
+                             <input type="text"
+                                 className="form-control text-center d4a-clickable"
+                                 disabled={true}
+                                 value={ShowRunShift === "Run" ? LineStatusDisplayData?.CasesThisRun.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2}) 
+                                     : LineStatusDisplayData?.CasesThisShift.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})} 
+                             />
+                         </div>
+                     </div> */}
+                     {/* <div className="col-sm-12 col-md-6 col-lg-4 h100" style={{height: "30vh", overflowY:"auto"}} >
+                         <table className="table table-striped table-hover">
+                             <thead className="thead-dark">
+                                 <tr>
+                                     <th><StringTranslator>Equipment</StringTranslator></th>
+                                     <th className="text-right"><StringTranslator>Rejects</StringTranslator></th>
+                                 </tr>
+                             </thead>
+                             <tbody>
+                                 {RealTimeRejectsArray.map((aReject, rIndex) => {
+                                     return (
+                                         <tr key={rIndex} className="d4a-clickable" onClick={() => {this.showRejectDetails(aReject)}}>
+                                             <td>{aReject.Equipment}</td>
+                                             <td className="text-right">{aReject.Count.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                                         </tr>
+                                     )
+                                 })}
+                             </tbody>
+                         </table>
+                     </div> */}
+                 </div>
+                 <div  
+                //  className="col-sm-12 col-md-12 col-lg-12"
+                 >
+                 {/* Equipment Carousel. Only show if there's at least 2 active equipments in the line */}
+                 {EquipmentArray.filter(x => x.EquipmentStatus !== 8 && x.LineID.toString() === SelectedLineID).length > 1 &&
+                     <div 
+                     >
+                         <D4ACarouselMulti AutoScroll={true} ScrollInterval={5} PageWidth={equipmentCardWidth}>
+                             {EquipmentArray.filter(x => x.EquipmentStatus !== 8 && x.LineID.toString() === SelectedLineID).map((anEquipment, eIndex) => {
+                                 return(
+                                     this.renderEquipmentCard(anEquipment, eIndex, equipmentCardWidth)
+                                 )
+                             })}
+                         </D4ACarouselMulti>
+                     </div>
+                 }
+                 </div>
+                 <Dialog
+                     open={this.state.ShowAlertDialog}
+                     keepMounted
+                     onClose={this.closeAlertDialog}
+                     aria-labelledby="alert-dialog-slide-title"
+                     aria-describedby="alert-dialog-slide-description"
+                 >
+                     <DialogTitle id="alert-dialog-slide-title">{this.state.AlertDialogTitle}</DialogTitle>
+                     <DialogContent>
+                         {this.state.AlertDialogContent}
+                     </DialogContent>
+                     <DialogActions>
+                         <Button onClick={this.closeAlertDialog} color="primary">
+                             Ok
+                         </Button>
+                     </DialogActions>
+                 </Dialog>
+                 <Modal 
+                     isOpen={ShowChartModal}
+                     onRequestClose={this.closeAlertDialog}
+                     style={this.customStyles}
+                 >
+                     <h2>
+                         {ChartModalTitle}
+                         <span className="float-right d4a-clickable" onClick={this.closeAlertDialog}><FontAwesomeIcon icon={faTimesCircle} />&nbsp;</span>
+                     </h2>
+                     {ChartModalContent}
+                 </Modal>
+             </div>
+         )
+     }
+ }
+ 
+ 
+ Modal.setAppElement('#root');
+ 
+ export default OEEDashboard;
