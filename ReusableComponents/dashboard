@@ -1842,6 +1842,6 @@
  }
  
  
- Modal.setAppElement('#root');
+ Modal.setAppElement('#root'); 
  
  export default OEEDashboard;
